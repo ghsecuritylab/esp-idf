@@ -18,7 +18,7 @@
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
 
-static sdmmc_card_t* s_cards[FF_VOLUMES] = { NULL };
+static sdmmc_card_t* s_cards[_VOLUMES] = { NULL };
 
 static const char* TAG = "diskio_sdmmc";
 
@@ -87,3 +87,4 @@ void ff_diskio_register_sdmmc(BYTE pdrv, sdmmc_card_t* card)
     s_cards[pdrv] = card;
     ff_diskio_register(pdrv, &sdmmc_impl);
 }
+
