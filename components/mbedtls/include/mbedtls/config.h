@@ -916,7 +916,7 @@
  *
  * Enable the checkup functions (*_self_test).
  */
-#define MBEDTLS_SELF_TEST
+//#define MBEDTLS_SELF_TEST
 
 /**
  * \def MBEDTLS_SHA256_SMALLER
@@ -1505,7 +1505,7 @@
  *      MBEDTLS_TLS_RSA_PSK_WITH_RC4_128_SHA
  *      MBEDTLS_TLS_PSK_WITH_RC4_128_SHA
  */
-#define MBEDTLS_ARC4_C
+//#define MBEDTLS_ARC4_C
 
 /**
  * \def MBEDTLS_ASN1_PARSE_C
@@ -1651,7 +1651,7 @@
  *
  * This module is used for testing (ssl_client/server).
  */
-#define MBEDTLS_CERTS_C
+//#define MBEDTLS_CERTS_C
 
 /**
  * \def MBEDTLS_CIPHER_C
