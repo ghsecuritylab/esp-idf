@@ -185,7 +185,7 @@ static int get_next_fd(vfs_fat_ctx_t* fat_ctx)
             if (fat_ctx->files[i] == NULL) {
                 return -1; // out of memory
             }
-            return i;
+            return (int) i;
         }
     }
     return -1;
