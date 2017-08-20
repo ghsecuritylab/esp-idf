@@ -290,7 +290,7 @@ export HOSTCC HOSTLD HOSTAR HOSTOBJCOPY SIZE
 CC := $(call dequote,$(CONFIG_TOOLPREFIX))gcc
 CXX := $(call dequote,$(CONFIG_TOOLPREFIX))c++
 LD := $(call dequote,$(CONFIG_TOOLPREFIX))ld
-AR := $(call dequote,$(CONFIG_TOOLPREFIX))gcc-ar
+AR := $(call dequote,$(CONFIG_TOOLPREFIX))ar
 OBJCOPY := $(call dequote,$(CONFIG_TOOLPREFIX))objcopy
 SIZE := $(call dequote,$(CONFIG_TOOLPREFIX))size
 export CC CXX LD AR OBJCOPY SIZE
@@ -326,7 +326,7 @@ endif
 # also depends on additional dependencies (linker scripts & binary libraries)
 # stored in COMPONENT_LINKER_DEPS, built via component.mk files' COMPONENT_ADD_LINKER_DEPS variable
 $(APP_ELF): $(foreach libcomp,$(COMPONENT_LIBRARIES),$(BUILD_DIR_BASE)/$(libcomp)/lib$(libcomp).a) $(COMPONENT_LINKER_DEPS) $(COMPONENT_PROJECT_VARS)
-	$(summary) LD $(notdir $@)
+	$(summary) LD $(patsubst $(PWD)/%,%,$@)
 	$(CC) $(LDFLAGS) -o $@ -Wl,-Map=$(APP_MAP)
 
 app: $(APP_BIN)
