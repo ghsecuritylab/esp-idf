@@ -22,7 +22,7 @@
 #include "bta_sys.h"
 #include "bta_dm_co.h"
 #include "bta_dm_ci.h"
-#include "btc_ble_storage.h"
+#include "btc_dm.h"
 #if (defined(BTIF_INCLUDED) && BTIF_INCLUDED == TRUE)
 #include "bt_utils.h"
 #if (BTM_OOB_INCLUDED == TRUE)
@@ -326,7 +326,7 @@ void bta_dm_sco_co_in_data(BT_HDR  *p_buf)
     if (btui_cfg.sco_use_mic) {
         btui_sco_codec_inqdata (p_buf);
     } else {
-        GKI_freebuf(p_buf);
+        osi_free(p_buf);
     }
 }
 

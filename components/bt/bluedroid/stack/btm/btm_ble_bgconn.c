@@ -64,7 +64,7 @@ static void background_connections_lazy_init()
 {
     if (!background_connections) {
         background_connections = hash_map_new(background_connection_buckets,
-                                              hash_function_bdaddr, NULL, allocator_calloc.free, bdaddr_equality_fn);
+                                      hash_function_bdaddr, NULL, osi_free_func, bdaddr_equality_fn);
         assert(background_connections);
     }
 }
@@ -258,18 +258,22 @@ BOOLEAN btm_update_dev_to_white_list(BOOLEAN to_add, BD_ADDR bd_addr)
     tBTM_BLE_CB *p_cb = &btm_cb.ble_ctr_cb;
 
     if (to_add && p_cb->white_list_avail_size == 0) {
-        BTM_TRACE_ERROR("%s Whitelist full, unable to add device", __func__);
+        BTM_TRACE_DEBUG("%s Whitelist full, unable to add device", __func__);
         return FALSE;
     }
 
     if (to_add) {
+        /* added the bd_addr to the connection hash map queue */
         background_connection_add((bt_bdaddr_t *)bd_addr);
     } else {
+        /* remove the bd_addr to the connection hash map queue */
         background_connection_remove((bt_bdaddr_t *)bd_addr);
     }
-
+    /* stop the auto connect */
     btm_suspend_wl_activity(p_cb->wl_state);
+    /* save the bd_addr to the btm_cb env */
     btm_enq_wl_dev_operation(to_add, bd_addr);
+    /* save the ba_addr to the controller white list & start the auto connet */
     btm_resume_wl_activity(p_cb->wl_state);
     return TRUE;
 }
@@ -672,11 +676,11 @@ void btm_ble_set_conn_st(tBTM_BLE_CONN_ST new_st)
 *******************************************************************************/
 void btm_ble_enqueue_direct_conn_req(void *p_param)
 {
-    tBTM_BLE_CONN_REQ   *p = (tBTM_BLE_CONN_REQ *)GKI_getbuf(sizeof(tBTM_BLE_CONN_REQ));
+    tBTM_BLE_CONN_REQ   *p = (tBTM_BLE_CONN_REQ *)osi_malloc(sizeof(tBTM_BLE_CONN_REQ));
 
     p->p_param = p_param;
 
-    GKI_enqueue (&btm_cb.ble_ctr_cb.conn_pending_q, p);
+    fixed_queue_enqueue(btm_cb.ble_ctr_cb.conn_pending_q, p);
 }
 /*******************************************************************************
 **
@@ -692,12 +696,11 @@ BOOLEAN btm_send_pending_direct_conn(void)
     tBTM_BLE_CONN_REQ *p_req;
     BOOLEAN     rt = FALSE;
 
-    if (!GKI_queue_is_empty(&btm_cb.ble_ctr_cb.conn_pending_q)) {
-        p_req = (tBTM_BLE_CONN_REQ *)GKI_dequeue (&btm_cb.ble_ctr_cb.conn_pending_q);
-
+    p_req = (tBTM_BLE_CONN_REQ*)fixed_queue_try_dequeue(btm_cb.ble_ctr_cb.conn_pending_q);
+    if (p_req != NULL) {
         rt = l2cble_init_direct_conn((tL2C_LCB *)(p_req->p_param));
 
-        GKI_freebuf((void *)p_req);
+        osi_free((void *)p_req);
     }
 
     return rt;

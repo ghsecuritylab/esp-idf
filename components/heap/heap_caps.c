@@ -94,8 +94,8 @@ IRAM_ATTR void *heap_caps_malloc( size_t size, uint32_t caps )
     }
     for (int prio = 0; prio < SOC_MEMORY_TYPE_NO_PRIOS; prio++) {
         //Iterate over heaps and check capabilities at this priority
-        for (int heap_idx = 0; heap_idx < num_registered_heaps; heap_idx++) {
-            heap_t *heap = &registered_heaps[heap_idx];
+        heap_t *heap;
+        SLIST_FOREACH(heap, &registered_heaps, next) {
             if (heap->heap == NULL) {
                 continue;
             }
@@ -133,6 +133,62 @@ IRAM_ATTR void *heap_caps_malloc( size_t size, uint32_t caps )
     return NULL;
 }
 
+
+#define MALLOC_DISABLE_EXTERNAL_ALLOCS -1
+//Dual-use: -1 (=MALLOC_DISABLE_EXTERNAL_ALLOCS) disables allocations in external memory, >=0 sets the limit for allocations preferring internal memory.
+static int malloc_alwaysinternal_limit=MALLOC_DISABLE_EXTERNAL_ALLOCS;
+
+void heap_caps_malloc_extmem_enable(size_t limit)
+{
+    malloc_alwaysinternal_limit=limit;
+}
+
+/*
+ Default memory allocation implementation. Should return standard 8-bit memory. malloc() essentially resolves to this function.
+*/
+IRAM_ATTR void *heap_caps_malloc_default( size_t size )
+{
+    if (malloc_alwaysinternal_limit==MALLOC_DISABLE_EXTERNAL_ALLOCS) {
+        return heap_caps_malloc( size, MALLOC_CAP_DEFAULT | MALLOC_CAP_INTERNAL);
+    } else {
+        void *r;
+        if (size <= malloc_alwaysinternal_limit) {
+            r=heap_caps_malloc( size, MALLOC_CAP_DEFAULT | MALLOC_CAP_INTERNAL );
+        } else {
+            r=heap_caps_malloc( size, MALLOC_CAP_DEFAULT | MALLOC_CAP_SPIRAM );
+        }
+        if (r==NULL) {
+            //try again while being less picky
+            r=heap_caps_malloc( size, MALLOC_CAP_DEFAULT );
+        }
+        return r;
+    }
+}
+
+/*
+ Same for realloc()
+ Note: keep the logic in here the same as in heap_caps_malloc_default (or merge the two as soon as this gets more complex...)
+ */
+IRAM_ATTR void *heap_caps_realloc_default( void *ptr, size_t size )
+{
+    if (malloc_alwaysinternal_limit==MALLOC_DISABLE_EXTERNAL_ALLOCS) {
+        return heap_caps_realloc( ptr, size, MALLOC_CAP_DEFAULT | MALLOC_CAP_INTERNAL );
+    } else {
+        void *r;
+        if (size <= malloc_alwaysinternal_limit) {
+            r=heap_caps_realloc( ptr, size, MALLOC_CAP_DEFAULT | MALLOC_CAP_INTERNAL );
+        } else {
+            r=heap_caps_realloc( ptr, size, MALLOC_CAP_DEFAULT | MALLOC_CAP_SPIRAM );
+        }
+        if (r==NULL && size>0) {
+            //We needed to allocate memory, but we didn't. Try again while being less picky.
+            r=heap_caps_realloc( ptr, size, MALLOC_CAP_DEFAULT );
+        }
+        return r;
+    }
+}
+
+
 /* Find the heap which belongs to ptr, or return NULL if it's
    not in any heap.
 
@@ -142,8 +198,8 @@ IRAM_ATTR void *heap_caps_malloc( size_t size, uint32_t caps )
 IRAM_ATTR static heap_t *find_containing_heap(void *ptr )
 {
     intptr_t p = (intptr_t)ptr;
-    for (size_t i = 0; i < num_registered_heaps; i++) {
-        heap_t *heap = &registered_heaps[i];
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
         if (heap->heap != NULL && p >= heap->start && p < heap->end) {
             return heap;
         }
@@ -216,8 +272,8 @@ IRAM_ATTR void *heap_caps_realloc( void *ptr, size_t size, int caps)
 size_t heap_caps_get_free_size( uint32_t caps )
 {
     size_t ret = 0;
-    for (int i = 0; i < num_registered_heaps; i++) {
-        heap_t *heap = &registered_heaps[i];
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
         if (heap_caps_match(heap, caps)) {
             ret += multi_heap_free_size(heap->heap);
         }
@@ -228,8 +284,8 @@ size_t heap_caps_get_free_size( uint32_t caps )
 size_t heap_caps_get_minimum_free_size( uint32_t caps )
 {
     size_t ret = 0;
-    for (int i = 0; i < num_registered_heaps; i++) {
-        heap_t *heap = &registered_heaps[i];
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
         if (heap_caps_match(heap, caps)) {
             ret += multi_heap_minimum_free_size(heap->heap);
         }
@@ -248,8 +304,8 @@ void heap_caps_get_info( multi_heap_info_t *info, uint32_t caps )
 {
     bzero(info, sizeof(multi_heap_info_t));
 
-    for (int i = 0; i < num_registered_heaps; i++) {
-        heap_t *heap = &registered_heaps[i];
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
         if (heap_caps_match(heap, caps)) {
             multi_heap_info_t hinfo;
             multi_heap_get_info(heap->heap, &hinfo);
@@ -270,8 +326,8 @@ void heap_caps_print_heap_info( uint32_t caps )
 {
     multi_heap_info_t info;
     printf("Heap summary for capabilities 0x%08X:\n", caps);
-    for (int i = 0; i < num_registered_heaps; i++) {
-        heap_t *heap = &registered_heaps[i];
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
         if (heap_caps_match(heap, caps)) {
             multi_heap_get_info(heap->heap, &info);
 
@@ -288,3 +344,18 @@ void heap_caps_print_heap_info( uint32_t caps )
     printf("    free %d allocated %d min_free %d largest_free_block %d\n", info.total_free_bytes, info.total_allocated_bytes, info.minimum_free_bytes, info.largest_free_block);
 }
 
+bool heap_caps_check_integrity(uint32_t caps, bool print_errors)
+{
+    bool all_heaps = caps & MALLOC_CAP_INVALID;
+    bool valid = true;
+
+    heap_t *heap;
+    SLIST_FOREACH(heap, &registered_heaps, next) {
+        if (heap->heap != NULL
+            && (all_heaps || (get_all_caps(heap) & caps) == caps)) {
+            valid = multi_heap_check(heap->heap, print_errors) && valid;
+        }
+    }
+
+    return valid;
+}

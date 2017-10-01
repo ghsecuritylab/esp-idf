@@ -24,6 +24,7 @@
 #include "rom/cache.h"
 #include "rom/uart.h"
 #include "soc/dport_reg.h"
+#include "soc/gpio_reg.h"
 #include "soc/efuse_reg.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/timer_group_reg.h"
@@ -270,7 +271,7 @@ void IRAM_ATTR esp_restart_noos()
     esp_cpu_stall(other_core_id);
 
     // other core is now stalled, can access DPORT registers directly
-    esp_dport_access_int_deinit();
+    esp_dport_access_int_pause();
 
     // We need to disable TG0/TG1 watchdogs
     // First enable RTC watchdog for 1 second
@@ -297,6 +298,17 @@ void IRAM_ATTR esp_restart_noos()
     // Disable cache
     Cache_Read_Disable(0);
     Cache_Read_Disable(1);
+
+#ifdef CONFIG_SPIRAM_SUPPORT
+    //External SPI RAM reconfigures some GPIO functions in a way that is not entirely undone in the boot rom.
+    //Undo them manually so we reboot correctly.
+    WRITE_PERI_REG(GPIO_FUNC0_IN_SEL_CFG_REG, 0x30);
+    WRITE_PERI_REG(GPIO_FUNC1_IN_SEL_CFG_REG, 0x30);
+    WRITE_PERI_REG(GPIO_FUNC2_IN_SEL_CFG_REG, 0x30);
+    WRITE_PERI_REG(GPIO_FUNC3_IN_SEL_CFG_REG, 0x30);
+    WRITE_PERI_REG(GPIO_FUNC4_IN_SEL_CFG_REG, 0x30);
+    WRITE_PERI_REG(GPIO_FUNC5_IN_SEL_CFG_REG, 0x30);
+#endif
 
     // Flush any data left in UART FIFOs
     uart_tx_wait_idle(0);
@@ -348,12 +360,12 @@ void system_restore(void)
 
 uint32_t esp_get_free_heap_size( void )
 {
-    return heap_caps_get_free_size( MALLOC_CAP_8BIT );
+    return heap_caps_get_free_size( MALLOC_CAP_DEFAULT );
 }
 
 uint32_t esp_get_minimum_free_heap_size( void )
 {
-    return heap_caps_get_minimum_free_size( MALLOC_CAP_8BIT );
+    return heap_caps_get_minimum_free_size( MALLOC_CAP_DEFAULT );
 }
 
 uint32_t system_get_free_heap_size(void) __attribute__((alias("esp_get_free_heap_size")));
