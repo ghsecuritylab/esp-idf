@@ -31,6 +31,8 @@
 #include "list.h"
 #include "alarm.h"
 #include "thread.h"
+#include "mutex.h"
+#include "fixed_queue.h"
 
 typedef struct {
     uint16_t opcode;
@@ -46,7 +48,7 @@ typedef struct {
     bool timer_is_set;
     osi_alarm_t *command_response_timer;
     list_t *commands_pending_response;
-    pthread_mutex_t commands_pending_response_lock;
+    osi_mutex_t commands_pending_response_lock;
 } command_waiting_response_t;
 
 typedef struct {
@@ -59,7 +61,7 @@ typedef struct {
     /*
       non_repeating_timer_t *command_response_timer;
       list_t *commands_pending_response;
-      pthread_mutex_t commands_pending_response_lock;
+      osi_mutex_t commands_pending_response_lock;
     */
 } hci_host_env_t;
 
@@ -183,7 +185,7 @@ static int hci_layer_init_env(void)
         LOG_ERROR("%s unable to create list for commands pending response.", __func__);
         return -1;
     }
-    pthread_mutex_init(&cmd_wait_q->commands_pending_response_lock, NULL);
+    osi_mutex_new(&cmd_wait_q->commands_pending_response_lock);
     cmd_wait_q->command_response_timer = osi_alarm_new("cmd_rsp_to", command_timed_out, cmd_wait_q, COMMAND_PENDING_TIMEOUT);
     if (!cmd_wait_q->command_response_timer) {
         LOG_ERROR("%s unable to create command response timer.", __func__);
@@ -206,7 +208,7 @@ static void hci_layer_deinit_env(void)
 
     cmd_wait_q = &hci_host_env.cmd_waiting_q;
     list_free(cmd_wait_q->commands_pending_response);
-    pthread_mutex_destroy(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_free(&cmd_wait_q->commands_pending_response_lock);
     osi_alarm_free(cmd_wait_q->command_response_timer);
     cmd_wait_q->command_response_timer = NULL;
 }
@@ -321,9 +323,9 @@ static void event_command_ready(fixed_queue_t *queue)
     hci_host_env.command_credits--;
 
     // Move it to the list of commands awaiting response
-    pthread_mutex_lock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_lock(&cmd_wait_q->commands_pending_response_lock, OSI_MUTEX_MAX_TIMEOUT);
     list_append(cmd_wait_q->commands_pending_response, wait_entry);
-    pthread_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
 
     // Send it off
     packet_fragmenter->fragment_and_dispatch(wait_entry->command);
@@ -361,8 +363,16 @@ static void fragmenter_transmit_finished(BT_HDR *packet, bool all_fragments_sent
         // This is kind of a weird case, since we're dispatching a partially sent packet
         // up to a higher layer.
         // TODO(zachoverflow): rework upper layer so this isn't necessary.
-        buffer_allocator->free(packet);
-        //dispatch_reassembled(packet);
+        //buffer_allocator->free(packet);
+
+        /* dispatch_reassembled(packet) will send the packet back to the higher layer
+           when controller buffer is not enough. hci will send the remain packet back
+           to the l2cap layer and saved in the Link Queue (p_lcb->link_xmit_data_q).
+           The l2cap layer will resend the packet to lower layer when controller buffer
+           can be used.
+        */
+
+        dispatch_reassembled(packet);
         //data_dispatcher_dispatch(interface.event_dispatcher, packet->event & MSG_EVT_MASK, packet);
     }
 }
@@ -387,10 +397,10 @@ static void restart_comamnd_waiting_response_timer(
         cmd_wait_q->timer_is_set = false;
     }
 
-    pthread_mutex_lock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_lock(&cmd_wait_q->commands_pending_response_lock, OSI_MUTEX_MAX_TIMEOUT);
     wait_entry = (list_is_empty(cmd_wait_q->commands_pending_response) ?
                   NULL : list_front(cmd_wait_q->commands_pending_response));
-    pthread_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
 
     if (wait_entry == NULL) {
         return;
@@ -409,10 +419,10 @@ static void command_timed_out(void *context)
     command_waiting_response_t *cmd_wait_q = (command_waiting_response_t *)context;
     waiting_command_t *wait_entry;
 
-    pthread_mutex_lock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_lock(&cmd_wait_q->commands_pending_response_lock, OSI_MUTEX_MAX_TIMEOUT);
     wait_entry = (list_is_empty(cmd_wait_q->commands_pending_response) ?
                   NULL : list_front(cmd_wait_q->commands_pending_response));
-    pthread_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
 
     if (wait_entry == NULL) {
         LOG_ERROR("%s with no commands pending response", __func__);
@@ -542,7 +552,7 @@ static serial_data_type_t event_to_data_type(uint16_t event)
 static waiting_command_t *get_waiting_command(command_opcode_t opcode)
 {
     command_waiting_response_t *cmd_wait_q = &hci_host_env.cmd_waiting_q;
-    pthread_mutex_lock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_lock(&cmd_wait_q->commands_pending_response_lock, OSI_MUTEX_MAX_TIMEOUT);
 
     for (const list_node_t *node = list_begin(cmd_wait_q->commands_pending_response);
             node != list_end(cmd_wait_q->commands_pending_response);
@@ -554,11 +564,11 @@ static waiting_command_t *get_waiting_command(command_opcode_t opcode)
 
         list_remove(cmd_wait_q->commands_pending_response, wait_entry);
 
-        pthread_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
+        osi_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
         return wait_entry;
     }
 
-    pthread_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
+    osi_mutex_unlock(&cmd_wait_q->commands_pending_response_lock);
     return NULL;
 }
 

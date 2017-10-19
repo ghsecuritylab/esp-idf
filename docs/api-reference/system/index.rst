@@ -4,11 +4,13 @@ System API
 .. toctree::
    :maxdepth: 1
 
-   Memory Allocation <mem_alloc>
+   Heap Memory Allocation <mem_alloc>
+   Heap Memory Debugging <heap_debug>
    Interrupt Allocation <intr_alloc>
    Watchdogs <wdts>
+   Hooks <hooks>
    Over The Air Updates (OTA) <ota>
-   Deep Sleep <deep_sleep>
+   Sleep Modes <sleep_modes>
    Logging <log>
    Base MAC address <base_mac_address>
    Application Level Tracing <app_trace>

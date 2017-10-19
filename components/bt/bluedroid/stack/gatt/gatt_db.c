@@ -27,7 +27,7 @@
 #if BLE_INCLUDED == TRUE && GATTS_INCLUDED == TRUE
 
 #include "bt_trace.h"
-//#include "bt_utils.h"
+#include "allocator.h"
 
 //#include <stdio.h>
 #include <string.h>
@@ -63,7 +63,9 @@ static BOOLEAN gatts_add_char_desc_value_check (tGATT_ATTR_VAL *attr_val, tGATTS
 BOOLEAN gatts_init_service_db (tGATT_SVC_DB *p_db, tBT_UUID *p_service,  BOOLEAN is_pri,
                                UINT16 s_hdl, UINT16 num_handle)
 {
-    GKI_init_q(&p_db->svc_buffer);
+    if (p_db->svc_buffer == NULL) { //in case already alloc
+        p_db->svc_buffer = fixed_queue_new(SIZE_MAX);
+    }
 
     if (!allocate_svc_db_buf(p_db)) {
         GATT_TRACE_ERROR("gatts_init_service_db failed, no resources\n");
@@ -334,6 +336,8 @@ tGATT_STATUS gatts_db_read_attr_value_by_type (tGATT_TCB   *p_tcb,
 #if (defined(BLE_DELAY_REQUEST_ENC) && (BLE_DELAY_REQUEST_ENC == TRUE))
     UINT8       flag;
 #endif
+    BOOLEAN need_rsp;
+    BOOLEAN have_send_request = false;
 
     if (p_db && p_db->p_attr_list) {
         p_attr = (tGATT_ATTR16 *)p_db->p_attr_list;
@@ -359,14 +363,27 @@ tGATT_STATUS gatts_db_read_attr_value_by_type (tGATT_TCB   *p_tcb,
                 UINT16_TO_STREAM (p, p_attr->handle);
 
                 status = read_attr_value ((void *)p_attr, 0, &p, FALSE, (UINT16)(*p_len - 2), &len, sec_flag, key_size);
+                if (status == GATT_PENDING) {
 
-                if (status == GATT_PENDING || status == GATT_STACK_RSP) {
-                    BOOLEAN need_rsp = (status != GATT_STACK_RSP);
+
+                    need_rsp = TRUE;
                     status = gatts_send_app_read_request(p_tcb, op_code, p_attr->handle, 0, trans_id, need_rsp);
 
                     /* one callback at a time */
                     break;
-                } else if (status == GATT_SUCCESS) {
+                } else if (status == GATT_SUCCESS || status == GATT_STACK_RSP) {
+                    if (status == GATT_STACK_RSP){
+                        need_rsp = FALSE;
+                        status = gatts_send_app_read_request(p_tcb, op_code, p_attr->handle, 0, trans_id, need_rsp);
+                        if(status == GATT_BUSY)
+                            break;
+
+                        if (!have_send_request){
+                            have_send_request = true;
+                            trans_id = p_tcb->sr_cmd.trans_id;
+                        }
+                    }
+
                     if (p_rsp->offset == 0) {
                         p_rsp->offset = len + 2;
                     }
@@ -509,7 +526,7 @@ UINT16 gatts_add_characteristic (tGATT_SVC_DB *p_db, tGATT_PERM perm,
             GATT_TRACE_DEBUG("attribute handle = %x\n", p_char_val->handle);
             p_char_val->p_value->attr_val.attr_len = attr_val->attr_len;
             p_char_val->p_value->attr_val.attr_max_len = attr_val->attr_max_len;
-            p_char_val->p_value->attr_val.attr_val = GKI_getbuf(attr_val->attr_max_len);
+            p_char_val->p_value->attr_val.attr_val = osi_malloc(attr_val->attr_max_len);
             if (p_char_val->p_value->attr_val.attr_val == NULL) {
                deallocate_attr_in_db(p_db, p_char_decl);
                deallocate_attr_in_db(p_db, p_char_val);
@@ -633,7 +650,7 @@ UINT16 gatts_add_char_descr (tGATT_SVC_DB *p_db, tGATT_PERM perm,
             p_char_dscptr->p_value->attr_val.attr_len = attr_val->attr_len;
             p_char_dscptr->p_value->attr_val.attr_max_len  = attr_val->attr_max_len;
             if (attr_val->attr_max_len != 0) {
-                p_char_dscptr->p_value->attr_val.attr_val = GKI_getbuf(attr_val->attr_max_len);
+                p_char_dscptr->p_value->attr_val.attr_val = osi_malloc(attr_val->attr_max_len);
                 if (p_char_dscptr->p_value->attr_val.attr_val == NULL) {
                     deallocate_attr_in_db(p_db, p_char_dscptr);
                     GATT_TRACE_WARNING("Warning in %s, line=%d, insufficient resource to allocate for descriptor value\n", __func__, __LINE__);
@@ -1335,16 +1352,15 @@ static BOOLEAN allocate_svc_db_buf(tGATT_SVC_DB *p_db)
 
     GATT_TRACE_DEBUG("allocate_svc_db_buf allocating extra buffer");
 
-    if ((p_buf = (BT_HDR *)GKI_getpoolbuf(GATT_DB_POOL_ID)) == NULL) {
+    if ((p_buf = (BT_HDR *)osi_calloc(GATT_DB_BUF_SIZE)) == NULL) {
         GATT_TRACE_ERROR("allocate_svc_db_buf failed, no resources");
         return FALSE;
     }
 
-    memset(p_buf, 0, GKI_get_buf_size(p_buf));
     p_db->p_free_mem    = (UINT8 *) p_buf;
-    p_db->mem_free      = GKI_get_buf_size(p_buf);
+    p_db->mem_free = GATT_DB_BUF_SIZE;
 
-    GKI_enqueue(&p_db->svc_buffer, p_buf);
+    fixed_queue_enqueue(p_db->svc_buffer, p_buf);
 
     return TRUE;
 

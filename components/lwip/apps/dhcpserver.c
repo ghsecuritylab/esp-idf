@@ -23,6 +23,7 @@
 #include "tcpip_adapter.h"
 
 #include "apps/dhcpserver.h"
+#include "apps/dhcpserver_options.h"
 
 #if ESP_DHCP
 
@@ -70,6 +71,11 @@
 #define DHCPS_STATE_NAK 4
 #define DHCPS_STATE_IDLE 5
 #define DHCPS_STATE_RELEASE 6
+
+typedef struct _list_node {
+	void *pnode;
+	struct _list_node *pnext;
+} list_node;
 
 ////////////////////////////////////////////////////////////////////////////////////
 
@@ -135,7 +141,7 @@ void *dhcps_option_info(u8_t op_id, u32_t opt_len)
  *                pinsert -- the insert node of the list
  * Returns      : none
 *******************************************************************************/
-void node_insert_to_list(list_node **phead, list_node *pinsert)
+static void node_insert_to_list(list_node **phead, list_node *pinsert)
 {
     list_node *plist = NULL;
     struct dhcps_pool *pdhcps_pool = NULL;
@@ -794,13 +800,13 @@ static s16_t parse_msg(struct dhcps_msg *m, u16_t len)
             pdhcps_pool = NULL;
             pnode = NULL;
         } else {
-            pdhcps_pool = (struct dhcps_pool *)malloc(sizeof(struct dhcps_pool));
+            pdhcps_pool = (struct dhcps_pool *)mem_malloc(sizeof(struct dhcps_pool));
             memset(pdhcps_pool , 0x00 , sizeof(struct dhcps_pool));
 
             pdhcps_pool->ip.addr = client_address.addr;
             memcpy(pdhcps_pool->mac, m->chaddr, sizeof(pdhcps_pool->mac));
             pdhcps_pool->lease_timer = lease_timer;
-            pnode = (list_node *)malloc(sizeof(list_node));
+            pnode = (list_node *)mem_malloc(sizeof(list_node));
             memset(pnode , 0x00 , sizeof(list_node));
 
             pnode->pnode = pdhcps_pool;
@@ -899,7 +905,7 @@ static void handle_dhcp(void *arg,
         malloc_len = p->tot_len;
     }
 
-    pmsg_dhcps = (struct dhcps_msg *)malloc(malloc_len);
+    pmsg_dhcps = (struct dhcps_msg *)mem_malloc(malloc_len);
     if (NULL == pmsg_dhcps) {
         pbuf_free(p);
         return;
@@ -1068,7 +1074,7 @@ void dhcps_start(struct netif *netif, ip4_addr_t ip)
 
     client_address_plus.addr = dhcps_poll.start_ip.addr;
 
-    udp_bind(pcb_dhcps, IP_ADDR_ANY, DHCPS_SERVER_PORT);
+    udp_bind(pcb_dhcps, &netif->ip_addr, DHCPS_SERVER_PORT);
     udp_recv(pcb_dhcps, handle_dhcp, NULL);
 #if DHCPS_DEBUG
     DHCPS_LOG("dhcps:dhcps_start->udp_recv function Set a receive callback handle_dhcp for UDP_PCB pcb_dhcps\n");
