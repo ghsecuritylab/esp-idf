@@ -35,6 +35,7 @@
 #include "phy.h"
 #include "phy_init_data.h"
 #include "esp_coexist.h"
+#include "driver/periph_ctrl.h"
 
 static const char* TAG = "phy_init";
 
@@ -50,8 +51,8 @@ esp_err_t esp_phy_rf_init(const esp_phy_init_data_t* init_data,
 
     _lock_acquire(&s_phy_rf_init_lock);
     if (s_phy_rf_init_count == 0) {
-        // Enable WiFi peripheral clock
-        DPORT_SET_PERI_REG_MASK(DPORT_WIFI_CLK_EN_REG, DPORT_WIFI_CLK_WIFI_EN | DPORT_WIFI_CLK_RNG_EN);
+        // Enable WiFi/BT common peripheral clock
+        periph_module_enable(PERIPH_WIFI_BT_COMMON_MODULE);
         ESP_LOGV(TAG, "register_chipv7_phy, init_data=%p, cal_data=%p, mode=%d",
                 init_data, calibration_data, mode);
         phy_set_wifi_mode_only(0);
@@ -75,8 +76,8 @@ esp_err_t esp_phy_rf_deinit(void)
     if (s_phy_rf_init_count == 1) {
         // Disable PHY and RF.
         phy_close_rf();
-        // Disable WiFi peripheral clock. Do not disable clock for hardware RNG
-        DPORT_CLEAR_PERI_REG_MASK(DPORT_WIFI_CLK_EN_REG, DPORT_WIFI_CLK_WIFI_EN);
+        // Disable WiFi/BT common peripheral clock. Do not disable clock for hardware RNG
+        periph_module_disable(PERIPH_WIFI_BT_COMMON_MODULE);
     } else {
 #if CONFIG_SW_COEXIST_ENABLE
         coex_deinit();
@@ -265,17 +266,17 @@ void esp_phy_load_cal_and_init(void)
         abort();
     }
 
-#ifdef CONFIG_ESP32_PHY_CALIBRATION_AND_DATA_STORAGE
-    esp_phy_calibration_mode_t calibration_mode = PHY_RF_CAL_PARTIAL;
-    if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET) {
-        calibration_mode = PHY_RF_CAL_NONE;
-    }
     const esp_phy_init_data_t* init_data = esp_phy_get_init_data();
     if (init_data == NULL) {
         ESP_LOGE(TAG, "failed to obtain PHY init data");
         abort();
     }
 
+#ifdef CONFIG_ESP32_PHY_CALIBRATION_AND_DATA_STORAGE
+    esp_phy_calibration_mode_t calibration_mode = PHY_RF_CAL_PARTIAL;
+    if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET) {
+        calibration_mode = PHY_RF_CAL_NONE;
+    }
     esp_err_t err = esp_phy_load_cal_data_from_nvs(cal_data);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "failed to load RF calibration data (0x%x), falling back to full calibration", err);
@@ -289,10 +290,11 @@ void esp_phy_load_cal_and_init(void)
     } else {
         err = ESP_OK;
     }
-    esp_phy_release_init_data(init_data);
 #else
-    esp_phy_rf_init(NULL, PHY_RF_CAL_FULL, cal_data);
+    esp_phy_rf_init(init_data, PHY_RF_CAL_FULL, cal_data);
 #endif
+
+    esp_phy_release_init_data(init_data);
 
     free(cal_data); // PHY maintains a copy of calibration data, so we can free this
 }

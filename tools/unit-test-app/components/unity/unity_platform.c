@@ -8,10 +8,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_clk.h"
 #include "soc/cpu.h"
 #include "esp_heap_caps.h"
-#include "esp_heap_trace.h"
 #include "test_utils.h"
+
+#ifdef CONFIG_HEAP_TRACING
+#include "esp_heap_trace.h"
+#endif
 
 #define unity_printf ets_printf
 
@@ -176,7 +180,7 @@ static void unity_run_single_test_by_index_parse(const char* filter, int index_m
         unity_run_single_test_by_index(test_index - 1);
         uint32_t end;
         RSR(CCOUNT, end);
-        uint32_t ms = (end - start) / (XT_CLOCK_FREQ / 1000);
+        uint32_t ms = (end - start) / (esp_clk_cpu_freq() / 1000);
         printf("Test ran in %dms\n", ms);
     }
 }
@@ -253,9 +257,22 @@ static int print_test_menu(void)
     return test_counter;
 }
 
+static int get_test_count(void)
+{
+    int test_counter = 0;
+    for (const struct test_desc_t* test = s_unity_tests_first;
+         test != NULL;
+         test = test->next)
+    {
+        ++test_counter;
+    }
+    return test_counter;
+}
+
 void unity_run_menu()
 {
-    int test_count = print_test_menu();
+    unity_printf("\n\nPress ENTER to see the list of tests.\n");
+    int test_count = get_test_count();
     while (true)
     {
         char cmdline[256] = { 0 };
