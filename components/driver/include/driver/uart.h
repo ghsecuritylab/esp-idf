@@ -106,7 +106,8 @@ typedef struct {
     uart_parity_t parity;               /*!< UART parity mode*/
     uart_stop_bits_t stop_bits;         /*!< UART stop bits*/
     uart_hw_flowcontrol_t flow_ctrl;    /*!< UART HW flow control mode (cts/rts)*/
-    uint8_t rx_flow_ctrl_thresh ;       /*!< UART HW RTS threshold*/
+    uint8_t rx_flow_ctrl_thresh;        /*!< UART HW RTS threshold*/
+    bool use_ref_tick;                  /*!< Set to true if UART should be clocked from REF_TICK */
 } uart_config_t;
 
 /**
@@ -460,6 +461,19 @@ esp_err_t uart_set_rts(uart_port_t uart_num, int level);
 esp_err_t uart_set_dtr(uart_port_t uart_num, int level);
 
 /**
+ * @brief Set UART idle interval after tx FIFO is empty
+ *
+ * @param uart_num UART_NUM_0, UART_NUM_1 or UART_NUM_2
+ * @param idle_num idle interval after tx FIFO is empty(unit: the time it takes to send one bit
+ *        under current baudrate)
+ *
+ * @return
+ *     - ESP_OK   Success
+ *     - ESP_FAIL Parameter error
+ */
+esp_err_t uart_set_tx_idle_num(uart_port_t uart_num, uint16_t idle_num);
+
+/**
 * @brief Set UART configuration parameters.
  *
  * @param uart_num    UART_NUM_0, UART_NUM_1 or UART_NUM_2
@@ -604,8 +618,10 @@ int uart_write_bytes_with_break(uart_port_t uart_num, const char* src, size_t si
 int uart_read_bytes(uart_port_t uart_num, uint8_t* buf, uint32_t length, TickType_t ticks_to_wait);
 
 /**
- * @brief UART ring buffer flush. This will discard all data in the UART RX buffer.
- *
+ * @brief Alias of uart_flush_input.
+ *        UART ring buffer flush. This will discard all data in the UART RX buffer.
+ * @note  Instead of waiting the data sent out, this function will clear UART rx buffer.
+ *        In order to send all the data in tx FIFO, we can use uart_wait_tx_done function.
  * @param uart_num UART_NUM_0, UART_NUM_1 or UART_NUM_2
  *
  * @return
@@ -615,8 +631,18 @@ int uart_read_bytes(uart_port_t uart_num, uint8_t* buf, uint32_t length, TickTyp
 esp_err_t uart_flush(uart_port_t uart_num);
 
 /**
- * @brief UART get RX ring buffer cached data length
+ * @brief Clear input buffer, discard all the data is in the ring-buffer.
+ * @note  In order to send all the data in tx FIFO, we can use uart_wait_tx_done function.
+ * @param uart_num UART_NUM_0, UART_NUM_1 or UART_NUM_2
  *
+ * @return
+ *     - ESP_OK Success
+ *     - ESP_FAIL Parameter error
+ */
+esp_err_t uart_flush_input(uart_port_t uart_num);
+
+/**
+ * @brief UART get RX ring buffer cached data length
  * @param uart_num UART port number.
  * @param size Pointer of size_t to accept cached data length
  *
@@ -656,6 +682,39 @@ esp_err_t uart_disable_pattern_det_intr(uart_port_t uart_num);
  *     - ESP_FAIL Parameter error
  */
 esp_err_t uart_enable_pattern_det_intr(uart_port_t uart_num, char pattern_chr, uint8_t chr_num, int chr_tout, int post_idle, int pre_idle);
+
+/**
+ * @brief Return the nearest detected pattern position in buffer.
+ *        The positions of the detected pattern are saved in a queue,
+ *        this function will dequeue the first pattern position and move the pointer to next pattern position.
+ * @note  If the RX buffer is full and flow control is not enabled,
+ *        the detected pattern may not be found in the rx buffer due to overflow.
+ *
+ *        The following APIs will modify the pattern position info:
+ *        uart_flush_input, uart_read_bytes, uart_driver_delete, uart_pop_pattern_pos
+ *        It is the application's responsibility to ensure atomic access to the pattern queue and the rx data buffer
+ *        when using pattern detect feature.
+ *
+ * @param uart_num UART port number
+ * @return
+ *     - (-1) No pattern found for current index or parameter error
+ *     - others the pattern position in rx buffer.
+ */
+int uart_pattern_pop_pos(uart_port_t uart_num);
+
+/**
+ * @brief Allocate a new memory with the given length to save record the detected pattern position in rx buffer.
+ * @param uart_num UART port number
+ * @param queue_length Max queue length for the detected pattern.
+ *        If the queue length is not large enough, some pattern positions might be lost.
+ *        Set this value to the maximum number of patterns that could be saved in data buffer at the same time.
+ * @return
+ *     - ESP_ERR_NO_MEM No enough memory
+ *     - ESP_ERR_INVALID_STATE Driver not installed
+ *     - ESP_FAIL Parameter error
+ *     - ESP_OK Success
+ */
+esp_err_t uart_pattern_queue_reset(uart_port_t uart_num, int queue_length);
 
 #ifdef __cplusplus
 }
