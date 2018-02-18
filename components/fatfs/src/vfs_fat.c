@@ -352,7 +352,7 @@ static int vfs_fat_fsync(void* ctx, int fd)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
     _lock_acquire(&fat_ctx->lock);
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     FRESULT res = f_sync(file);
     int rc = 0;
     if (res != FR_OK) {
