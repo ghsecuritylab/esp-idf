@@ -411,6 +411,19 @@ int uart_pattern_pop_pos(uart_port_t uart_num)
     return pos;
 }
 
+int uart_pattern_get_pos(uart_port_t uart_num)
+{
+    UART_CHECK((p_uart_obj[uart_num]), "uart driver error", (-1));
+    UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
+    uart_pat_rb_t* pat_pos = &p_uart_obj[uart_num]->rx_pattern_pos;
+    int pos = -1;
+    if (pat_pos != NULL && pat_pos->rd != pat_pos->wr) {
+        pos = pat_pos->data[pat_pos->rd];
+    }
+    UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
+    return pos;
+}
+
 esp_err_t uart_pattern_queue_reset(uart_port_t uart_num, int queue_length)
 {
     UART_CHECK((uart_num < UART_NUM_MAX), "uart_num error", ESP_FAIL);
@@ -1119,8 +1132,8 @@ int uart_read_bytes(uart_port_t uart_num, uint8_t* buf, uint32_t length, TickTyp
                 if(res == pdTRUE) {
                     UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
                     p_uart_obj[uart_num]->rx_buffered_len += p_uart_obj[uart_num]->rx_stash_len;
-                    UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
                     p_uart_obj[uart_num]->rx_buffer_full_flg = false;
+                    UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
                     uart_enable_rx_intr(p_uart_obj[uart_num]->uart_num);
                 }
             }
@@ -1165,6 +1178,14 @@ esp_err_t uart_flush_input(uart_port_t uart_num)
         }
         data = (uint8_t*) xRingbufferReceive(p_uart->rx_ring_buf, &size, (portTickType) 0);
         if(data == NULL) {
+            if( p_uart_obj[uart_num]->rx_buffered_len != 0 ) {
+                ESP_LOGE(UART_TAG, "rx_buffered_len error");
+                p_uart_obj[uart_num]->rx_buffered_len = 0; 
+            }
+            //We also need to clear the `rx_buffer_full_flg` here.
+            UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
+            p_uart_obj[uart_num]->rx_buffer_full_flg = false;
+            UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
             break;
         }
         UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
@@ -1177,8 +1198,8 @@ esp_err_t uart_flush_input(uart_port_t uart_num)
             if(res == pdTRUE) {
                 UART_ENTER_CRITICAL(&uart_spinlock[uart_num]);
                 p_uart_obj[uart_num]->rx_buffered_len += p_uart_obj[uart_num]->rx_stash_len;
-                UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
                 p_uart_obj[uart_num]->rx_buffer_full_flg = false;
+                UART_EXIT_CRITICAL(&uart_spinlock[uart_num]);
             }
         }
     }
