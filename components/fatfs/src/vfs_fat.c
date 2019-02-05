@@ -33,7 +33,7 @@ typedef struct {
     char tmp_path_buf[FILENAME_MAX+3];  /* temporary buffer used to prepend drive name to the path */
     char tmp_path_buf2[FILENAME_MAX+3]; /* as above; used in functions which take two path arguments */
     bool *o_append;  /* O_APPEND is stored here for each max_files entries (because O_APPEND is not compatible with FA_OPEN_APPEND) */
-    FIL files[0];   /* array with max_files entries; must be the final member of the structure */
+    FIL* files[0];   /* array with max_files entries; must be the final member of the structure */
 } vfs_fat_ctx_t;
 
 typedef struct {
@@ -147,7 +147,7 @@ esp_err_t esp_vfs_fat_register(const char* base_path, const char* fat_drive, siz
         .access_p = &vfs_fat_access,
         .truncate_p = &vfs_fat_truncate,
     };
-    size_t ctx_size = sizeof(vfs_fat_ctx_t) + max_files * sizeof(FIL);
+    size_t ctx_size = sizeof(vfs_fat_ctx_t) + max_files * sizeof(FIL*);
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) calloc(1, ctx_size);
     if (fat_ctx == NULL) {
         return ESP_ERR_NO_MEM;
@@ -213,7 +213,11 @@ esp_err_t esp_vfs_fat_unregister()
 static int get_next_fd(vfs_fat_ctx_t* fat_ctx)
 {
     for (size_t i = 0; i < fat_ctx->max_files; ++i) {
-        if (fat_ctx->files[i].obj.fs == NULL) {
+        if (fat_ctx->files[i] == NULL) {
+            fat_ctx->files[i] = calloc(1, sizeof(FIL));
+            if (fat_ctx->files[i] == NULL) {
+                return -1; // out of memory
+            }
             return (int) i;
         }
     }
@@ -275,7 +279,8 @@ static int fresult_to_errno(FRESULT fr)
 
 static void file_cleanup(vfs_fat_ctx_t* ctx, int fd)
 {
-    memset(&ctx->files[fd], 0, sizeof(FIL));
+    free(ctx->files[fd]);
+    ctx->files[fd] = NULL;
 }
 
 /**
@@ -310,7 +315,7 @@ static int vfs_fat_open(void* ctx, const char * path, int flags, int mode)
         errno = ENFILE;
         return -1;
     }
-    FRESULT res = f_open(&fat_ctx->files[fd], path, fat_mode_conv(flags));
+    FRESULT res = f_open(fat_ctx->files[fd], path, fat_mode_conv(flags));
     if (res != FR_OK) {
         file_cleanup(fat_ctx, fd);
         _lock_release(&fat_ctx->lock);
@@ -332,7 +337,7 @@ static int vfs_fat_open(void* ctx, const char * path, int flags, int mode)
 static ssize_t vfs_fat_write(void* ctx, int fd, const void * data, size_t size)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     FRESULT res;
     if (fat_ctx->o_append[fd]) {
         if ((res = f_lseek(file, f_size(file))) != FR_OK) {
@@ -356,7 +361,7 @@ static ssize_t vfs_fat_write(void* ctx, int fd, const void * data, size_t size)
 static ssize_t vfs_fat_read(void* ctx, int fd, void * dst, size_t size)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     unsigned read = 0;
     FRESULT res = f_read(file, dst, size, &read);
     if (res != FR_OK) {
@@ -373,7 +378,7 @@ static int vfs_fat_fsync(void* ctx, int fd)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
     _lock_acquire(&fat_ctx->lock);
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     FRESULT res = f_sync(file);
     _lock_release(&fat_ctx->lock);
     int rc = 0;
@@ -389,7 +394,7 @@ static int vfs_fat_close(void* ctx, int fd)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
     _lock_acquire(&fat_ctx->lock);
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     FRESULT res = f_close(file);
     file_cleanup(fat_ctx, fd);
     _lock_release(&fat_ctx->lock);
@@ -405,7 +410,7 @@ static int vfs_fat_close(void* ctx, int fd)
 static off_t vfs_fat_lseek(void* ctx, int fd, off_t offset, int mode)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     off_t new_pos;
     if (mode == SEEK_SET) {
         new_pos = offset;
@@ -431,7 +436,7 @@ static off_t vfs_fat_lseek(void* ctx, int fd, off_t offset, int mode)
 static int vfs_fat_fstat(void* ctx, int fd, struct stat * st)
 {
     vfs_fat_ctx_t* fat_ctx = (vfs_fat_ctx_t*) ctx;
-    FIL* file = &fat_ctx->files[fd];
+    FIL* file = fat_ctx->files[fd];
     st->st_size = f_size(file);
     st->st_mode = S_IRWXU | S_IRWXG | S_IRWXO | S_IFREG;
     st->st_mtime = 0;
