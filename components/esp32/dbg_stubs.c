@@ -16,6 +16,7 @@
 // Currently one stub is used for GCOV functionality
 //
 
+#include "sdkconfig.h"
 #include "eri.h"
 #include "xtensa-debug-module.h"
 #include "esp_dbg_stubs.h"
